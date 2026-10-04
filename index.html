@@ -89,6 +89,212 @@
 
         document.getElementById("user-input").addEventListener("keypress", function(e) {
             if (e.key === "Enter") sendMessage();
+            // ==========================================================================
+// 1. SUPABASE PROD ENVIRONMENT CONFIGURATION KEYS
+// ==========================================================================
+const SUPABASE_URL = "https://your-unique-project-id.supabase.co"; 
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.your-long-key-here...";
+
+// Connect directly to your home machine network endpoint router gateway
+const OLLAMA_API = "http://ddns.net";
+const MODEL_NAME = "qwen2.5:0.5b"; // Fast model for your Xeon CPU
+
+// Initialize the global client instance object cleanly via CDN source modules
+const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let activeSessionUser = null;
+let currentThreadId = null;
+let isSignUpMode = false;
+
+// Auto-check for active logged-in browser tokens immediately on layout execution
+window.onload = async () => {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+        initializeUserSession(session.user);
+    }
+    
+    // Listen for sign-in or log-out events seamlessly across browser reloads
+    supabaseClient.auth.onAuthStateChange((_event, session) => {
+        if (session) {
+            initializeUserSession(session.user);
+        } else {
+            deconstructSessionUI();
+        }
+    });
+};
+
+function toggleAuthMode() {
+    isSignUpMode = !isSignUpMode;
+    document.getElementById("auth-title").innerText = isSignUpMode ? "Create Cloud Account" : "Cloud AI Authorization";
+    document.getElementById("auth-primary-action").innerText = isSignUpMode ? "Register Profile" : "Login";
+    document.getElementById("auth-toggle-text").innerText = isSignUpMode ? "Sign in instead" : "Create an encrypted profile";
+}
+
+// ==========================================================================
+// 2. LIVE CLOUD AUTH TRANSACTION CODE
+// ==========================================================================
+async function handleAuth() {
+    const email = document.getElementById("auth-user").value.trim(); // Supabase uses emails to index profiles
+    const password = document.getElementById("auth-pass").value.trim();
+
+    if (!email || !password) {
+        alert("Please populate all authorization variables.");
+        return;
+    }
+
+    if (isSignUpMode) {
+        // Registers account securely inside the auth.users system table
+        const { error } = await supabaseClient.auth.signUp({ email, password });
+        if (error) return alert(error.message);
+        alert("Account registered successfully! You can log in right away.");
+        toggleAuthMode();
+    } else {
+        // Authenticates the login request and saves a secure JWT session token
+        const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+        if (error) return alert(error.message);
+    }
+}
+
+function initializeUserSession(user) {
+    activeSessionUser = user;
+    document.getElementById("auth-overlay").style.display = "none";
+    document.getElementById("display-username").innerText = user.email.split('@')[0]; // Grabs user's handle name text string
+    fetchUserThreads();
+}
+
+async function logout() {
+    await supabaseClient.auth.signOut(); // Wipes the session token cleanly from the browser
+}
+
+function deconstructSessionUI() {
+    activeSessionUser = null;
+    currentThreadId = null;
+    document.getElementById("auth-overlay").style.display = "flex";
+    document.getElementById("chat-bounds").innerHTML = `<div class="message ai">👋 Session terminated. Please re-authenticate to open logs.</div>`;
+}
+
+// ==========================================================================
+// 3. DATABASE SYNC & ROW FETCH PIPELINE CODE
+// ==========================================================================
+async function fetchUserThreads() {
+    const container = document.getElementById("history-container");
+    container.innerHTML = "";
+
+    // Pulls your custom structural rows over the PostgREST API grid layer
+    const { data: threads, error } = await supabaseClient
+        .from('chat_threads')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+    if (error) return console.error(error);
+
+    threads.forEach(thread => {
+        const row = document.createElement("div");
+        row.className = "history-item";
+        row.innerText = thread.title;
+        row.onclick = () => renderActiveThreadLogs(thread.id);
+        container.appendChild(row);
+    });
+}
+
+async function createNewChatThread() {
+    const titlePrompt = prompt("Enter a description label for this new chat folder:");
+    if (!titlePrompt) return;
+
+    const { data, error } = await supabaseClient
+        .from('chat_threads')
+        .insert([{ user_id: activeSessionUser.id, title: titlePrompt }])
+        .select();
+
+    if (error) return alert("Error setting up thread channel: " + error.message);
+    
+    currentThreadId = data[0].id;
+    fetchUserThreads();
+    document.getElementById("chat-bounds").innerHTML = `<div class="message ai">New thread initialized: <b>${titlePrompt}</b>. Submit your first query below!</div>`;
+}
+
+async function renderActiveThreadLogs(threadId) {
+    currentThreadId = threadId;
+    const bounds = document.getElementById("chat-bounds");
+    bounds.innerHTML = "";
+
+    const { data: messages, error } = await supabaseClient
+        .from('chat_messages')
+        .select('*')
+        .eq('thread_id', threadId)
+        .order('created_at', { ascending: true });
+
+    if (error) return console.error(error);
+
+    messages.forEach(msg => {
+        bounds.innerHTML += `<div class="message ${msg.role === 'user' ? 'user' : 'ai'}">${msg.content}</div>`;
+    });
+    
+    const scroller = document.getElementById("chat-container");
+    scroller.scrollTop = scroller.scrollHeight;
+}
+
+function clearCurrentChat() {
+    createNewChatThread();
+}
+
+// ==========================================================================
+// 4. THE LIVE INTEGRATED OLLAMA PROMPT ROUTER EXECUTOR
+// ==========================================================================
+async function sendMessage() {
+    const inputField = document.getElementById("user-input");
+    const chatBounds = document.getElementById("chat-bounds");
+    const promptText = inputField.value.trim();
+    if (!promptText) return;
+
+    if (!currentThreadId) {
+        alert("Please click 'Start New Session' or pick an old conversation in the left sidebar first!");
+        return;
+    }
+
+    inputField.value = "";
+    chatBounds.innerHTML += `<div class="message user">${promptText}</div>`;
+    
+    const aiBubble = document.createElement("div");
+    aiBubble.className = "message ai";
+    aiBubble.innerText = "Thinking...";
+    chatBounds.appendChild(aiBubble);
+    
+    const scrollContainer = document.getElementById("chat-container");
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+
+    // Post user query directly up into the cloud db rows mapping
+    await supabaseClient.from('chat_messages').insert([
+        { thread_id: currentThreadId, user_id: activeSessionUser.id, role: 'user', content: promptText }
+    ]);
+
+    try {
+        const response = await fetch(OLLAMA_API, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                model: MODEL_NAME,
+                prompt: promptText,
+                stream: false
+            })
+        });
+
+        const data = await response.json();
+        aiBubble.innerText = data.response;
+        
+        // Post assistant answer row straight into the cloud db schema
+        await supabaseClient.from('chat_messages').insert([
+            { thread_id: currentThreadId, user_id: activeSessionUser.id, role: 'assistant', content: data.response }
+        ]);
+
+    } catch (error) {
+        aiBubble.className = "message ai error";
+        aiBubble.innerText = "Error: Could not reach your home AI engine. Is Ollama active?";
+        console.error(error);
+    }
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+}
+
         });
     </script>
 </body>
